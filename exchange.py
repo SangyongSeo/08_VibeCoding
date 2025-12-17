@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 간단한 환율 조회 프로그램
-Frankfurter API를 사용하여 실시간 환율 정보를 조회합니다.
+ExchangeRate API를 사용하여 실시간 환율 정보를 조회합니다.
 (API 키 불필요)
 """
 
@@ -32,68 +32,77 @@ CURRENCY_NAMES = {
     "THB": "태국 바트",
 }
 
-
-def get_available_currencies() -> list:
-    """사용 가능한 통화 목록을 가져옵니다."""
-    response = requests.get("https://api.frankfurter.app/currencies")
-    response.raise_for_status()
-    return response.json()
+# API 기본 URL
+API_BASE_URL = "https://open.er-api.com/v6/latest"
 
 
-def get_exchange_rate(base: str, target: str = None) -> dict:
+def get_exchange_rate(base: str) -> dict:
     """환율 정보를 가져옵니다."""
-    url = f"https://api.frankfurter.app/latest?from={base.upper()}"
-    if target:
-        url += f"&to={target.upper()}"
-
-    response = requests.get(url)
+    url = f"{API_BASE_URL}/{base.upper()}"
+    response = requests.get(url, timeout=10)
     response.raise_for_status()
-    return response.json()
+    data = response.json()
+
+    if data.get("result") != "success":
+        raise Exception("API 요청 실패")
+
+    return data
 
 
-def convert_currency(amount: float, base: str, target: str) -> dict:
-    """통화를 변환합니다."""
-    url = f"https://api.frankfurter.app/latest?amount={amount}&from={base.upper()}&to={target.upper()}"
-    response = requests.get(url)
-    response.raise_for_status()
-    return response.json()
-
-
-def display_rates(data: dict, show_all: bool = False) -> None:
+def display_rates(data: dict, target: str = None, show_all: bool = False) -> None:
     """환율 정보를 보기 좋게 출력합니다."""
-    base = data["base"]
-    date = data["date"]
+    base = data["base_code"]
     rates = data["rates"]
+    update_time = data.get("time_last_update_utc", "N/A")
 
     base_name = CURRENCY_NAMES.get(base, base)
 
     print("\n" + "=" * 50)
     print(f"💱 환율 정보 (기준: 1 {base} = {base_name})")
-    print(f"📅 기준일: {date}")
+    print(f"📅 업데이트: {update_time[:16]}")
     print("=" * 50)
 
+    # 특정 통화만 표시
+    if target:
+        if target in rates:
+            rate = rates[target]
+            name = CURRENCY_NAMES.get(target, target)
+            print(f"  {target}: {rate:,.4f} ({name})")
+        else:
+            print(f"  ❌ {target} 통화를 찾을 수 없습니다.")
     # 주요 통화만 표시하거나 전체 표시
-    if show_all:
-        display_currencies = rates.keys()
+    elif show_all:
+        for currency in sorted(rates.keys()):
+            rate = rates[currency]
+            name = CURRENCY_NAMES.get(currency, "")
+            if name:
+                print(f"  {currency}: {rate:,.4f} ({name})")
+            else:
+                print(f"  {currency}: {rate:,.4f}")
     else:
         display_currencies = ["KRW", "USD", "EUR", "JPY", "GBP", "CNY"]
+        for currency in display_currencies:
+            if currency in rates and currency != base:
+                rate = rates[currency]
+                name = CURRENCY_NAMES.get(currency, currency)
+                print(f"  {currency}: {rate:,.4f} ({name})")
 
-    for currency in display_currencies:
-        if currency in rates:
-            rate = rates[currency]
-            name = CURRENCY_NAMES.get(currency, currency)
-            print(f"  {currency}: {rate:,.4f} ({name})")
-
-    if not show_all and len(rates) > 6:
-        print(f"\n  ... 외 {len(rates) - 6}개 통화")
-        print("  (전체 보기: 'all' 입력)")
+        remaining = len(rates) - len(display_currencies)
+        if remaining > 0:
+            print(f"\n  ... 외 {remaining}개 통화")
+            print("  (전체 보기: 'USD all' 형식으로 입력)")
 
     print("=" * 50 + "\n")
 
 
-def display_conversion(data: dict, amount: float, base: str, target: str) -> None:
+def display_conversion(rates: dict, amount: float, base: str, target: str) -> None:
     """환전 결과를 출력합니다."""
-    result = data["rates"][target]
+    if target not in rates:
+        print(f"❌ {target} 통화를 찾을 수 없습니다.\n")
+        return
+
+    rate = rates[target]
+    result = amount * rate
     base_name = CURRENCY_NAMES.get(base, base)
     target_name = CURRENCY_NAMES.get(target, target)
 
@@ -103,6 +112,7 @@ def display_conversion(data: dict, amount: float, base: str, target: str) -> Non
     print(f"  {amount:,.2f} {base} ({base_name})")
     print(f"  ↓")
     print(f"  {result:,.2f} {target} ({target_name})")
+    print(f"\n  환율: 1 {base} = {rate:,.4f} {target}")
     print("=" * 50 + "\n")
 
 
@@ -110,38 +120,19 @@ def show_help():
     """도움말을 표시합니다."""
     print("""
 ╔══════════════════════════════════════════════════╗
-║              💱 환율 조회 프로그램 도움말              ║
+║         💱 환율 조회 프로그램 도움말                ║
 ╠══════════════════════════════════════════════════╣
-║  명령어 사용법:                                      ║
-║                                                    ║
-║  • USD          → USD 기준 주요 환율 조회            ║
-║  • USD all      → USD 기준 전체 환율 조회            ║
-║  • USD KRW      → USD → KRW 환율만 조회             ║
-║  • 100 USD KRW  → 100 USD를 KRW로 환전             ║
-║                                                    ║
-║  • list         → 지원 통화 목록 보기                ║
-║  • help         → 이 도움말 보기                    ║
-║  • quit / q     → 프로그램 종료                     ║
+║  명령어 사용법:                                   ║
+║                                                  ║
+║  • USD          → USD 기준 주요 환율 조회         ║
+║  • USD all      → USD 기준 전체 환율 조회         ║
+║  • USD KRW      → USD → KRW 환율만 조회          ║
+║  • 100 USD KRW  → 100 USD를 KRW로 환전           ║
+║                                                  ║
+║  • help         → 이 도움말 보기                  ║
+║  • quit / q     → 프로그램 종료                   ║
 ╚══════════════════════════════════════════════════╝
 """)
-
-
-def show_currency_list():
-    """지원 통화 목록을 표시합니다."""
-    try:
-        currencies = get_available_currencies()
-        print("\n" + "=" * 50)
-        print("🌍 지원 통화 목록")
-        print("=" * 50)
-        for code, name in sorted(currencies.items()):
-            korean_name = CURRENCY_NAMES.get(code, "")
-            if korean_name:
-                print(f"  {code}: {name} ({korean_name})")
-            else:
-                print(f"  {code}: {name}")
-        print("=" * 50 + "\n")
-    except Exception as e:
-        print(f"❌ 통화 목록을 가져오는데 실패했습니다: {e}\n")
 
 
 def parse_input(user_input: str) -> tuple:
@@ -189,9 +180,6 @@ def main():
             elif lower_input == "help":
                 show_help()
                 continue
-            elif lower_input == "list":
-                show_currency_list()
-                continue
 
             amount, base, target, show_all = parse_input(user_input)
 
@@ -199,28 +187,29 @@ def main():
                 print("❌ 올바른 형식으로 입력해주세요. 'help'로 사용법을 확인하세요.\n")
                 continue
 
-            if amount:
+            # API 호출
+            data = get_exchange_rate(base)
+            rates = data["rates"]
+
+            if amount and target:
                 # 환전 모드
-                data = convert_currency(amount, base, target)
-                display_conversion(data, amount, base, target)
+                display_conversion(rates, amount, base, target)
             elif target:
                 # 특정 통화 환율 조회
-                data = get_exchange_rate(base, target)
-                display_rates(data)
+                display_rates(data, target=target)
             else:
                 # 기준 통화 환율 조회
-                data = get_exchange_rate(base)
-                display_rates(data, show_all)
+                display_rates(data, show_all=show_all)
 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
-                print("❌ 지원하지 않는 통화 코드입니다. 'list'로 지원 통화를 확인하세요.\n")
+                print("❌ 지원하지 않는 통화 코드입니다.\n")
             else:
                 print(f"❌ API 오류: {e}\n")
         except requests.exceptions.ConnectionError:
             print("❌ 인터넷 연결을 확인해주세요.\n")
-        except KeyError as e:
-            print(f"❌ 통화 코드를 확인해주세요: {e}\n")
+        except requests.exceptions.Timeout:
+            print("❌ 요청 시간이 초과되었습니다. 다시 시도해주세요.\n")
         except Exception as e:
             print(f"❌ 오류 발생: {e}\n")
 
